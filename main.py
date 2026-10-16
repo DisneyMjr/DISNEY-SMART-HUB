@@ -13,14 +13,14 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
-from PySide6.QtCore import Qt, QObject, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox, QLineEdit)
 
 APP_NAME = "DISNEY-SMART-HUB"
 IS_WINDOWS = sys.platform == "win32"
-USER_AGENT = "DisneySmartHub/0.3 (GitHub Releases installer)"
+USER_AGENT = "DisneySmartHub/0.4 (GitHub Releases installer)"
 
 
 def bundled(name):
@@ -101,9 +101,9 @@ def detect_executable(app):
     return None
 
 
-class Worker(QObject):
+class Worker(QThread):
     progress = Signal(int)
-    finished = Signal(str, str, str)  # action, version, detail
+    result = Signal(str, str, str)  # action, version, detail
     error = Signal(str)
 
     def __init__(self, app, action):
@@ -115,10 +115,11 @@ class Worker(QObject):
             info, asset = github_release(self.app['repo'])
             version = info.get('tag_name', 'versão indisponível')
             if self.action == 'check':
-                self.finished.emit('check', version, str(bool(asset)))
+                self.result.emit('check', version, str(bool(asset)))
                 return
             if not asset:
-                raise RuntimeError('A Release mais recente não contém um MSI x64' if IS_WINDOWS else 'A Release mais recente não contém uma AppImage x64')
+                raise RuntimeError('A última Release não contém um MSI Windows x64. Publique o arquivo MSI na aba Releases, pois arquivos de Actions > Artifacts não servem para este instalador.' if IS_WINDOWS else 'A última Release não contém uma AppImage Linux x64. Publique-a na aba Releases.')
+            self.progress.emit(1)
             url = asset['browser_download_url']
             if not url.startswith('https://github.com/' + self.app['repo'] + '/releases/download/'):
                 raise RuntimeError('URL inesperada do instalador; operação cancelada.')
@@ -135,7 +136,7 @@ class Worker(QObject):
             finally:
                 partial.unlink(missing_ok=True)
             if IS_WINDOWS:
-                self.finished.emit('installer', version, str(dest))
+                self.result.emit('installer', version, str(dest))
             else:
                 appimage = app_data() / 'programs' / self.app['id'] / clean_name
                 appimage.parent.mkdir(parents=True, exist_ok=True)
@@ -144,12 +145,14 @@ class Worker(QObject):
                 state = state_read()
                 state[self.app['id']] = {'version':version, 'executable':str(appimage)}
                 state_write(state)
-                self.finished.emit('installed', version, str(appimage))
+                self.result.emit('installed', version, str(appimage))
         except urllib.error.HTTPError as e:
-            detail = ('Nenhuma Release pública encontrada (404). Publique uma Release antes de instalar.' if e.code == 404 else f'GitHub respondeu HTTP {e.code}.')
+            detail = ('Nenhuma Release pública encontrada (404). Publique o MSI em Releases, não apenas em Actions > Artifacts.' if e.code == 404 else f'GitHub respondeu HTTP {e.code}.')
             self.error.emit(detail)
+        except urllib.error.URLError as e:
+            self.error.emit(f'Falha de conexão com o GitHub: {e.reason}. Confira a internet e tente novamente.')
         except Exception as exc:
-            self.error.emit(str(exc))
+            self.error.emit(f'Não foi possível concluir: {type(exc).__name__}: {exc}')
 
 
 class Tile(QFrame):
@@ -263,17 +266,21 @@ class Window(QMainWindow):
         tile = self.tiles[app['id']]
         tile.button.setEnabled(False); tile.check.setEnabled(False)
         tile.progress.show(); tile.progress.setValue(0)
-        tile.status.setText('Consultando GitHub...' if action == 'check' else 'Baixando instalador...')
-        thread = QThread(self); worker = Worker(app, action)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
+        tile.status.setText('Consultando Releases do GitHub...' if action == 'check' else 'Localizando instalador na última Release...')
+        worker = Worker(app, action)
+        # Mantenha uma referência forte durante toda a transferência.
+        self.threads.append(worker)
         worker.progress.connect(tile.progress.setValue)
         worker.error.connect(lambda message, a=app: self.on_error(a, message))
-        worker.finished.connect(lambda result, version, detail, a=app: self.on_done(a, result, version, detail))
-        worker.error.connect(thread.quit); worker.finished.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater); thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda t=thread: self.threads.remove(t) if t in self.threads else None)
-        self.threads.append(thread); thread.start()
+        worker.result.connect(lambda result, version, detail, a=app: self.on_done(a, result, version, detail))
+        worker.finished.connect(lambda w=worker: self.cleanup_worker(w))
+        worker.error.connect(lambda message, w=worker: self.cleanup_worker(w))
+        worker.start()
+
+    def cleanup_worker(self, worker):
+        if worker in self.threads:
+            self.threads.remove(worker)
+        worker.deleteLater()
 
     def reset_tile(self, app):
         tile = self.tiles[app['id']]

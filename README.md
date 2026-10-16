@@ -63,3 +63,11 @@ Se quiser um MSI do próprio launcher, será necessário acrescentar um projeto 
 - O código de atualização não é executado automaticamente e não verifica assinatura digital.
 - Os aplicativos precisam ter instaladores Linux e Windows já publicados como assets de uma GitHub Release.
 - Se uma Release for privada, estiver ausente ou não contiver asset apropriado, o Hub mostra uma mensagem e não instala.
+
+
+## Instalação pelo GitHub Releases
+
+O hub consulta `https://api.github.com/repos/OWNER/REPO/releases/latest`.
+O instalador **não usa** os Artifacts do Actions. Publique um arquivo `.msi` para Windows e `.AppImage` para Linux na última Release pública, e certifique-se de que `apps.json` aponta ao repositório certo.
+
+A versão 0.4 corrige o ciclo das tarefas em segundo plano e exibe erros de rede, ausência de Release e ausência de instalador ao usuário.
