@@ -1,0 +1,8 @@
+[
+  {"id":"vector","name":"VectorSmart","tag":"V","subtitle":"Ilustração e desenhos vetoriais","repo":"DisneyMjr/DISNEY-VECTOR-STUDIO","color":"#8c67ff","exe":["vectorsmart.exe","vectorcraft.exe"]},
+  {"id":"foto","name":"FotoSmart","tag":"F","subtitle":"Edição de imagens e fotografias","repo":"DisneyMjr/fotosmartdisneymkt","color":"#258bff","exe":["fotosmart.exe","photocraft.exe"]},
+  {"id":"light","name":"Light Smart","tag":"L","subtitle":"Organização e revelação de fotos","repo":"DisneyMjr/LIGHT-SMART","color":"#e4a34f","exe":["lightsmart.exe","lightcraft.exe"]},
+  {"id":"video","name":"Video Maker","tag":"P","subtitle":"Edição de vídeos e áudio","repo":"DisneyMjr/VIDEO-MAKER","color":"#e66c8e","exe":["videomaker.exe","filmcraft.exe"]},
+  {"id":"design","name":"Design Smart","tag":"D","subtitle":"Diagramação e design editorial","repo":"DisneyMjr/DESIGN-SMART","color":"#31bdad","exe":["designsmart.exe","designcraft.exe"]},
+  {"id":"effect","name":"Effect Smart","tag":"E","subtitle":"Efeitos visuais e animação","repo":"DisneyMjr/EFFECT-SMART","color":"#d86aff","exe":["effectsmart.exe","effectcraft.exe"]}
+]
