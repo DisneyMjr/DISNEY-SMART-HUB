@@ -14,12 +14,13 @@ import urllib.request
 import webbrowser
 
 from PySide6.QtCore import Qt, QObject, Signal, QThread
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox, QLineEdit)
 
 APP_NAME = "DISNEY-SMART-HUB"
 IS_WINDOWS = sys.platform == "win32"
-USER_AGENT = "DisneySmartHub/0.2 (GitHub Releases installer)"
+USER_AGENT = "DisneySmartHub/0.3 (GitHub Releases installer)"
 
 
 def bundled(name):
@@ -333,5 +334,8 @@ QScrollArea > QWidget > QWidget {background:transparent;}
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    icon_path = bundled("favicon.png")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
     win = Window(); win.show()
     sys.exit(app.exec())
