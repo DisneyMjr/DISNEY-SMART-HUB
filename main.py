@@ -12,15 +12,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+import hashlib
 
 from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QApplication, QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox, QLineEdit)
+    QLabel, QPushButton, QFrame, QScrollArea, QProgressBar, QLineEdit, QDialog)
 
 APP_NAME = "DISNEY-SMART-HUB"
 IS_WINDOWS = sys.platform == "win32"
-USER_AGENT = "DisneySmartHub/0.4 (GitHub Releases installer)"
+USER_AGENT = "DisneySmartHub/0.5 (GitHub Releases installer)"
 
 
 def bundled(name):
@@ -101,10 +102,98 @@ def detect_executable(app):
     return None
 
 
+class SmartDialog(QDialog):
+    """Theme-safe, high-contrast modal for all launcher notifications."""
+    def __init__(self, parent, title, message, kind='info', confirm=False, folder=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setMinimumWidth(510)
+        self.setMaximumWidth(760)
+        self.setObjectName('smartDialog')
+        self.setStyleSheet('''
+            QDialog#smartDialog {background:#141c2e;color:#f2f5ff;}
+            QLabel {color:#e9edfc;background:transparent;}
+            QLabel#dialogTitle {font-size:19px;font-weight:750;color:#ffffff;}
+            QLabel#dialogBody {font-size:13px;color:#d7e2f7;}
+            QPushButton {padding:10px 20px;border-radius:9px;font-size:13px;font-weight:700;
+                background:#2b3753;color:#ffffff;border:1px solid #465573;min-width:90px;}
+            QPushButton:hover {background:#3b4a70;}
+            QPushButton#dialogPrimary {background:#6659f6;border:1px solid #7b73ff;color:#ffffff;}
+            QPushButton#dialogPrimary:hover {background:#8277ff;}
+        ''')
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(26, 25, 26, 22)
+        outer.setSpacing(17)
+        top = QHBoxLayout()
+        symbol = QLabel({'error':'✕', 'warning':'!', 'success':'✓', 'info':'i'}.get(kind,'i'))
+        symbol.setAlignment(Qt.AlignCenter)
+        symbol.setFixedSize(36,36)
+        tint = {'error':'#ff6778','warning':'#ffd166','success':'#54dfa5','info':'#8eb5ff'}.get(kind,'#8eb5ff')
+        symbol.setStyleSheet(f'background:#25304a;border-radius:18px;color:{tint};font-size:21px;font-weight:800;')
+        top.addWidget(symbol)
+        heading = QLabel(title); heading.setObjectName('dialogTitle'); heading.setWordWrap(True)
+        top.addWidget(heading, 1)
+        outer.addLayout(top)
+        body = QLabel(message)
+        body.setObjectName('dialogBody')
+        body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        body.setWordWrap(True)
+        body.setMinimumHeight(50)
+        outer.addWidget(body)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        if folder:
+            open_folder = QPushButton('Abrir pasta')
+            open_folder.clicked.connect(lambda: self._open_folder(folder))
+            buttons.addWidget(open_folder)
+        if confirm:
+            cancel = QPushButton('Cancelar')
+            cancel.clicked.connect(self.reject)
+            buttons.addWidget(cancel)
+            primary = QPushButton('Abrir instalador')
+            primary.setObjectName('dialogPrimary')
+            primary.clicked.connect(self.accept)
+        else:
+            primary = QPushButton('Entendi')
+            primary.setObjectName('dialogPrimary')
+            primary.clicked.connect(self.accept)
+        buttons.addWidget(primary)
+        outer.addLayout(buttons)
+        primary.setFocus()
+
+    def _open_folder(self, folder):
+        try:
+            path = str(Path(folder).resolve())
+            if IS_WINDOWS:
+                subprocess.Popen(['explorer.exe', path])
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', path])
+            else:
+                subprocess.Popen(['xdg-open', path])
+        except OSError as exc:
+            SmartDialog(self, 'Não foi possível abrir a pasta', str(exc), 'error').exec()
+
+
+def notify(parent, title, message, kind='info', folder=None):
+    SmartDialog(parent, title, message, kind=kind, folder=folder).exec()
+
+
+def ask_install(parent, title, message, folder):
+    return SmartDialog(parent, title, message, kind='success', confirm=True, folder=folder).exec() == QDialog.Accepted
+
+
+def release_version(tag):
+    """Normalize common release tags for comparisons; None means unknown."""
+    match = re.search(r'(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)', tag or '')
+    return tuple(map(int, match.groups())) if match else None
+
+
 class Worker(QThread):
     progress = Signal(int)
     result = Signal(str, str, str)  # action, version, detail
     error = Signal(str)
+    stage = Signal(str)
 
     def __init__(self, app, action):
         super().__init__()
@@ -120,6 +209,7 @@ class Worker(QThread):
             if not asset:
                 raise RuntimeError('A última Release não contém um MSI Windows x64. Publique o arquivo MSI na aba Releases, pois arquivos de Actions > Artifacts não servem para este instalador.' if IS_WINDOWS else 'A última Release não contém uma AppImage Linux x64. Publique-a na aba Releases.')
             self.progress.emit(1)
+            self.stage.emit('Baixando instalador...')
             url = asset['browser_download_url']
             if not url.startswith('https://github.com/' + self.app['repo'] + '/releases/download/'):
                 raise RuntimeError('URL inesperada do instalador; operação cancelada.')
@@ -132,9 +222,13 @@ class Worker(QThread):
             partial = dest.with_suffix(dest.suffix + '.part')
             try:
                 download_file(url, partial, self.progress)
+                expected = int(asset.get('size') or 0)
+                if expected and partial.stat().st_size != expected:
+                    raise RuntimeError('Download incompleto: tamanho diferente do arquivo publicado.')
                 partial.replace(dest)
             finally:
                 partial.unlink(missing_ok=True)
+            self.progress.emit(100)
             if IS_WINDOWS:
                 self.result.emit('installer', version, str(dest))
             else:
@@ -160,7 +254,7 @@ class Tile(QFrame):
         super().__init__()
         self.app, self.controller = app, controller
         self.setObjectName('tile')
-        self.setFixedHeight(132)
+        self.setFixedHeight(158)
         main = QHBoxLayout(self)
         main.setContentsMargins(22, 16, 22, 16)
         main.setSpacing(17)
@@ -177,11 +271,14 @@ class Tile(QFrame):
         self.button = QPushButton(); self.button.setObjectName('primary')
         self.button.setFixedWidth(134)
         self.button.clicked.connect(lambda: self.controller.main_click(self.app))
-        self.progress = QProgressBar(); self.progress.setFixedWidth(134); self.progress.setFixedHeight(5)
-        self.progress.setTextVisible(False); self.progress.hide()
-        self.check = QPushButton('Verificar versão'); self.check.setObjectName('textbtn')
+        self.progress = QProgressBar(); self.progress.setFixedWidth(134); self.progress.setFixedHeight(17)
+        self.progress.setTextVisible(True); self.progress.setFormat('%p%'); self.progress.hide()
+        self.update_button = QPushButton('Instalar / atualizar')
+        self.update_button.setObjectName('textbtn')
+        self.update_button.clicked.connect(lambda: self.controller.start(self.app, 'install'))
+        self.check = QPushButton('Verificar atualizações'); self.check.setObjectName('textbtn')
         self.check.clicked.connect(lambda: self.controller.start(self.app, 'check'))
-        right.addWidget(self.button); right.addWidget(self.progress); right.addWidget(self.check)
+        right.addWidget(self.button); right.addWidget(self.progress); right.addWidget(self.update_button); right.addWidget(self.check)
         main.addLayout(right)
         self.refresh()
 
@@ -189,6 +286,7 @@ class Tile(QFrame):
         current = detect_executable(self.app)
         data = state_read().get(self.app['id'], {})
         self.button.setText('Abrir' if current else 'Instalar')
+        self.update_button.setVisible(bool(current))
         if current:
             self.status.setText(f"Instalado  •  {data.get('version', 'versão não identificada')}")
         else:
@@ -259,22 +357,22 @@ class Window(QMainWindow):
         path = detect_executable(app)
         if path:
             try: subprocess.Popen([path], close_fds=True)
-            except OSError as e: QMessageBox.warning(self, 'Não foi possível abrir', str(e))
+            except OSError as e: notify(self, 'Não foi possível abrir', str(e), 'error')
         else: self.start(app, 'install')
 
     def start(self, app, action):
         tile = self.tiles[app['id']]
-        tile.button.setEnabled(False); tile.check.setEnabled(False)
+        tile.button.setEnabled(False); tile.check.setEnabled(False); tile.update_button.setEnabled(False)
         tile.progress.show(); tile.progress.setValue(0)
         tile.status.setText('Consultando Releases do GitHub...' if action == 'check' else 'Localizando instalador na última Release...')
         worker = Worker(app, action)
         # Mantenha uma referência forte durante toda a transferência.
         self.threads.append(worker)
         worker.progress.connect(tile.progress.setValue)
+        worker.stage.connect(tile.status.setText)
         worker.error.connect(lambda message, a=app: self.on_error(a, message))
         worker.result.connect(lambda result, version, detail, a=app: self.on_done(a, result, version, detail))
         worker.finished.connect(lambda w=worker: self.cleanup_worker(w))
-        worker.error.connect(lambda message, w=worker: self.cleanup_worker(w))
         worker.start()
 
     def cleanup_worker(self, worker):
@@ -284,31 +382,49 @@ class Window(QMainWindow):
 
     def reset_tile(self, app):
         tile = self.tiles[app['id']]
-        tile.button.setEnabled(True); tile.check.setEnabled(True); tile.progress.hide(); tile.refresh()
+        tile.button.setEnabled(True); tile.check.setEnabled(True); tile.update_button.setEnabled(True); tile.progress.hide(); tile.refresh()
 
     def on_error(self, app, message):
         self.reset_tile(app)
-        QMessageBox.warning(self, app['name'], message)
+        notify(self, app['name'], message, 'warning')
 
     def on_done(self, app, action, version, detail):
         self.reset_tile(app)
         if action == 'check':
             installed = state_read().get(app['id'], {}).get('version')
-            note = 'Instalador disponível.' if detail == 'True' else 'Nenhum instalador compatível nesta Release.'
-            if installed: note += f'\nVersão registrada neste computador: {installed}.'
-            QMessageBox.information(self, app['name'], f'Última Release: {version}\n{note}')
+            path = detect_executable(app)
+            available = detail == 'True'
+            comparison = (release_version(version), release_version(installed))
+            if not available:
+                message = f'Última Release: {version}\nNão há instalador compatível para este sistema nessa Release.'
+                kind = 'warning'
+            elif path and all(x is not None for x in comparison) and comparison[0] > comparison[1]:
+                message = f'Nova versão disponível: {version}\nInstalada: {installed}\n\nUse o botão Instalar/Atualizar para baixar.'
+                kind = 'success'
+            elif path and all(x is not None for x in comparison) and comparison[0] <= comparison[1]:
+                message = f'Você já possui a versão {installed} ou mais recente.\nÚltima Release: {version}'
+                kind = 'success'
+            else:
+                message = (f'Última Release: {version}\nInstalador disponível.\n'
+                           + ('A versão instalada não pôde ser identificada automaticamente.' if path else 'Aplicativo não detectado neste computador.'))
+                kind = 'info'
+            notify(self, app['name'], message, kind)
         elif action == 'installer':
-            result = QMessageBox.question(self, app['name'],
-              f'Instalador baixado:\n{detail}\n\nDeseja abrir o instalador MSI agora?\nVerifique o editor e a assinatura digital antes de autorizar.',
-              QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-            if result == QMessageBox.Yes:
+            folder = str(Path(detail).parent)
+            if ask_install(self, app['name'],
+                f'Instalador baixado com sucesso!\n\n{detail}\n\nDeseja abrir o MSI agora? Confira a origem e a assinatura digital antes de autorizar.',
+                folder):
                 try:
-                    # Never run downloaded MSI elevated or silently from the launcher.
                     subprocess.Popen(['msiexec.exe','/i', detail], close_fds=True)
+                    state = state_read()
+                    current = state.get(app['id'], {})
+                    current['last_downloaded_version'] = version
+                    state[app['id']] = current
+                    state_write(state)
                 except OSError as e:
-                    QMessageBox.warning(self, 'Instalação', str(e))
+                    notify(self, 'Instalação', str(e), 'error', folder=folder)
         elif action == 'installed':
-            QMessageBox.information(self, app['name'], f'AppImage instalada em:\n{detail}\nVersão: {version}')
+            notify(self, app['name'], f'AppImage disponível em:\n{detail}\nVersão: {version}', 'success', folder=str(Path(detail).parent))
             self.tiles[app['id']].refresh()
 
 
@@ -332,7 +448,7 @@ QPushButton#primary:hover {background:#7b70ff;}
 QPushButton#primary:disabled {background:#3c3a70;color:#989bb4;}
 QPushButton#textbtn {background:transparent;color:#aab5cb;}
 QPushButton#textbtn:hover {color:white;background:#262f45;}
-QProgressBar {background:#2f3446;border:0;border-radius:2px;}
+QProgressBar {background:#2f3446;border:0;border-radius:5px;color:#ffffff;text-align:center;font-size:10px;font-weight:bold;}
 QProgressBar::chunk {background:#7d75ff;border-radius:2px;}
 QLineEdit {background:#192236;border:1px solid #323d55;border-radius:9px;color:white;padding:10px;}
 QScrollArea {border:0;background:transparent;}

@@ -71,3 +71,16 @@ O hub consulta `https://api.github.com/repos/OWNER/REPO/releases/latest`.
 O instalador **não usa** os Artifacts do Actions. Publique um arquivo `.msi` para Windows e `.AppImage` para Linux na última Release pública, e certifique-se de que `apps.json` aponta ao repositório certo.
 
 A versão 0.4 corrige o ciclo das tarefas em segundo plano e exibe erros de rede, ausência de Release e ausência de instalador ao usuário.
+
+## Atualização v0.5: diálogos e downloads
+
+- Mensagens próprias em tema escuro, com texto selecionável e contraste alto.
+- Confirmação de instalação do MSI com botões **Abrir instalador**, **Cancelar** e **Abrir pasta**.
+- Barra de download com porcentagem quando o servidor informa o tamanho do arquivo.
+- Verificação do tamanho do arquivo baixado antes de disponibilizá-lo.
+- Botão **Instalar / atualizar** também para aplicativos já detectados.
+- Verificação de Releases e comparação de versões quando o aplicativo tem uma versão instalada registrada.
+- Os MSI são abertos com `msiexec /i`, com confirmação do usuário, e não são instalados silenciosamente.
+- No Linux, o launcher baixa AppImage e a coloca na pasta do usuário.
+
+**Importante:** O instalador MSI concluído não significa que o app foi instalado com êxito. A detecção só confirma a presença de um executável conhecido; a versão exata pode não ser detectável. O funcionamento depende de Releases com os instaladores apropriados publicados nos repositórios configurados.
